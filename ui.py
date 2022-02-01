@@ -1,6 +1,8 @@
 from tkinter import *
 from enum import Enum
+from PIL import ImageTk, Image
 import graphs
+import pickle
 
 
 class Mode(Enum):
@@ -9,6 +11,26 @@ class Mode(Enum):
     ADD_COLLECTOR = 1
     ADD_END = 2
 
+
+def kill_type(parent, c_type):
+    for c in parent.winfo_children():
+        if type(c) == c_type:
+            c.destroy()
+
+
+def verify_r_box(name, pop, max_pop):
+    return name is not None and len(name) > 0 \
+           and int(pop) >= 0 \
+           and int(max_pop) >= 0 \
+           and int(pop) <= int(max_pop)
+
+
+def on_enter(e, top, n, name_e, cap_e, max_e):
+    if verify_r_box(name_e.get(), cap_e.get(), max_e.get()):
+        n.set_name(name_e.get())
+        n.set_pop(int(cap_e.get()))
+        n.set_max_pop(int(max_e.get()))
+        top.destroy()
 
 class UI:
     def __init__(self):
@@ -27,17 +49,15 @@ class UI:
 
         self.canvas = Canvas(self.window.geometry("1280x720"), width=1280, height=720)
 
-        self.buffer = StringVar()
-        self.d1_buffer = IntVar()
-        self.d2_buffer = IntVar()
-        self.buffers = [self.buffer, self.d1_buffer, self.d2_buffer]
-
-        self.selected = None
+        self.ph = ImageTk.PhotoImage(Image.open('office.jpeg'), master=self.canvas)
+        self.canvas.create_image((150, 0), image=self.ph, anchor='nw')
+        self.canvas.update()
 
         self.node_grid = {}
         self.edge_map = {}
-
         self.selector = None
+        self.selected = None
+        self.top_ui = None
 
         btn_add_snode = Button(self.window
                                , text="Add Sensor Node"
@@ -67,11 +87,38 @@ class UI:
         self.window.update()
 
         btn_gen_graph = Button(self.window
-                               , text="Generate Graph"
+                               , text="Validate Building"
                                , anchor="w"
-                               , command=lambda: self.create_building()
+                               , command=lambda: self.validate_building()
                                , width=15)
         btn_gen_graph.place(x=0, y=btn_add_enode.winfo_y() + btn_add_enode.winfo_height())
+
+        self.window.update()
+
+        btn_save = Button(self.window
+                          , text="Save!"
+                          , anchor="w"
+                          , command=lambda: save(self, 'yeet.pkl')
+                          , width=15)
+        btn_save.place(x=0, y=btn_gen_graph.winfo_y() + btn_gen_graph.winfo_height())
+
+        self.window.update()
+
+        btn_restore = Button(self.window
+                             , text="Restore"
+                             , anchor="w"
+                             , command=lambda: restore(self, 'yeet.pkl')
+                             , width=15)
+        btn_restore.place(x=0, y=btn_save.winfo_y() + btn_save.winfo_height())
+
+        self.window.update()
+
+        btn_clear = Button(self.window
+                             , text="Clear"
+                             , anchor="w"
+                             , command=lambda: self.restore({},{})
+                             , width=15)
+        btn_clear.place(x=0, y=btn_restore.winfo_y() + btn_restore.winfo_height())
 
         self.window.update()
 
@@ -81,60 +128,148 @@ class UI:
         self.mode = mode
 
     def callback(self, e):
-        if not clickable(e.x):
+        if not clickable(e.x) or self.mode == Mode.POINTER:
             return
+        if self.create_node(Wrap(e.x, e.y)) is not None:
+            self.on_shape_r_clicked(e)
 
-        o_name = gen_name(e)
+    def create_node(self, wrap):
+        o_name = gen_name(wrap)
         if o_name in self.node_grid.keys():
-            return
+            return None
 
         o, n = None, None
         if self.mode == Mode.ADD_SENSOR:
-            o = self.canvas.create_rectangle(get_grid_coord(e), fill='cyan', tags=gen_name(e))
-            n = graphs.SensorNode(self.auto_name(graphs.SensorNode)
-                                  , *self.translate_to_neato_coord(*get_middle(*get_grid_coord(e))))
+            o = self.canvas.create_rectangle(get_grid_coord(wrap), fill='cyan', tags=gen_name(wrap))
+            n = graphs.SensorNode(self.auto_name_node(graphs.SensorNode)
+                                  # , *self.translate_to_neato_coord(*get_middle(*get_grid_coord(wrap))))
+                                  , get_grid_coord(wrap)[0], get_grid_coord(wrap)[1])
 
         elif self.mode == Mode.ADD_COLLECTOR:
-            o = self.canvas.create_oval(get_grid_coord(e), fill='red', tags=gen_name(e))
-            n = graphs.Node(self.auto_name(graphs.Node)
-                            , *self.translate_to_neato_coord(*get_middle(*get_grid_coord(e))))
+            o = self.canvas.create_oval(get_grid_coord(wrap), fill='red', tags=gen_name(wrap))
+            n = graphs.Node(self.auto_name_node(graphs.Node)
+                            # , *self.translate_to_neato_coord(*get_middle(*get_grid_coord(wrap))))
+                            , get_grid_coord(wrap)[0], get_grid_coord(wrap)[1])
 
         elif self.mode == Mode.ADD_END:
-            o = self.canvas.create_oval(get_grid_coord(e), fill='green', tags=gen_name(e))
-            n = graphs.ExitNode(self.auto_name(graphs.ExitNode)
-                                , *self.translate_to_neato_coord(*get_middle(*get_grid_coord(e))))
+            o = self.canvas.create_oval(get_grid_coord(wrap), fill='green', tags=gen_name(wrap))
+            n = graphs.ExitNode(self.auto_name_node(graphs.ExitNode)
+                                # , *self.translate_to_neato_coord(*get_middle(*get_grid_coord(wrap))))
+                                , get_grid_coord(wrap)[0], get_grid_coord(wrap)[1])
 
         self.canvas.tag_bind(o_name, '<Button-1>', self.on_shape_l_clicked)
+        self.canvas.tag_bind(o_name, '<Button-2>', self.on_scroll_clicked)
+        # self.canvas.tag_bind(o_name, '<Button-2>', self.on_shape_double_l_clicked)
         self.canvas.tag_bind(o_name, '<Button-3>', self.on_shape_r_clicked)
 
         if o is not None:
-            self.node_grid[gen_name(e)] = {'graphic': o, 'node': n}
+            self.node_grid[gen_name(wrap)] = {'graphic': o, 'node': n}
+            print(f'Placed: {n} ({n.get_x()}, {self.h - n.get_y()})')
 
         self.canvas.pack()
+        return n
 
-        self.on_shape_r_clicked(e)
+    def restore(self, saved_node_grid, saved_edge_map):
+
+        for ui_o in [d['graphic'] for d in self.node_grid.values()] + [l for (l, e) in self.edge_map.values()]:
+            self.canvas.delete(ui_o)
+
+        self.node_grid = {}
+        self.edge_map = {}
+        print(saved_node_grid)
+
+        for n in [d['node'] for d in saved_node_grid.values()]:  # Build nodes
+            self.node_to_mode(n)  # Set correct mode for node
+            self.create_node(Wrap(n.get_x(), n.get_y()))
+        for e in [e for (l, e) in saved_edge_map.values()]:  # Build edges
+            edge = self.create_edge(Wrap(e.get_first().get_x(), e.get_first().get_y())
+                             , Wrap(e.get_second().get_x(), e.get_second().get_y()))
+            edge.set_weight(e.get_weight())
+            edge.set_id(e.get_id())
+            self.edge_map.values()
+
+    def node_to_mode(self, node):
+        if type(node) is graphs.SensorNode:
+            self.mode = Mode.ADD_SENSOR
+        elif type(node) is graphs.Node:
+            self.mode = Mode.ADD_COLLECTOR
+        elif type(node) is graphs.ExitNode:
+            self.mode = Mode.ADD_END
 
     def on_shape_l_clicked(self, e):
         if self.selected is None:
             self.remove_selector()
             self.selected = get_grid_coord(e)
             self.selector = self.canvas.create_rectangle(get_grid_coord(e), width=3, outline='black')
-        else:
-            sel_name = gen_name_xy(self.selected[0], self.selected[1])
-            if self.node_grid[sel_name] is not None \
-                    and self.node_grid[sel_name]['node'] is not self.node_grid[gen_name(e)]['node']:
-                line = self.canvas.create_line(*get_middle(*get_grid_coord(e)), *get_middle(*self.selected))
-                self.edge_map[frozenset({sel_name, gen_name(e)})] = ((line
-                                                                      , graphs.Edge(self.node_grid[gen_name(e)]['node']
-                                                                                    , self.node_grid[sel_name]['node']))
-                )
-                self.remove_selector()
+        self.create_edge(Wrap(e.x, e.y), Wrap(self.selected[0], self.selected[1]))
 
+    def create_edge(self, e, sel):
+        edge = None
+        sel_name = gen_name_xy(sel.x, sel.y)
+        print(self.node_grid)
+        if self.node_grid[sel_name] is not None \
+                and self.get_node(sel) is not self.get_node(e) \
+                and frozenset({sel_name, gen_name(e)}) not in self.edge_map.keys():
+            line = self.canvas.create_line(*get_middle(*get_grid_coord(e)), *get_middle(*get_grid_coord(sel)))
+            edge = graphs.Edge(self.get_node(e), self.get_node(sel), self.auto_id_edge())
+            self.edge_map[frozenset({sel_name, gen_name(e)})] = (line, edge)
+            self.remove_selector()
         self.canvas.pack()
+        return edge
+
+    entry_list = []
+
+    def on_scroll_clicked(self, e):
+        self.kill_all_edge_entries()
+
+        for line, edge in self.get_n_edge_tuples(gen_name(e)):
+            frame = Frame(self.window)
+
+            label_val = Label(frame, text='W: ')
+            label_val.grid(row=0, column=0)
+
+            entry_val = Entry(frame, width=3)
+            entry_val.insert(END, edge.get_weight())
+            entry_val.grid(row=0, column=1)
+
+            label_id = Label(frame, text='ID: ')
+            label_id.grid(row=1, column=0)
+
+            entry_id = Entry(frame, width=3)
+            entry_id.insert(END, edge.get_id())
+            entry_id.grid(row=1, column=1)
+
+            frame.place(x=get_middle(*self.canvas.bbox(line))[0]-20, y=get_middle(*self.canvas.bbox(line))[1])
+
+            # entry.place(*get_middle(*self.canvas.bbox(line)))
+            self.entry_list.append((edge, (frame, entry_val, entry_id)))
+            # self.entry_ids.append((entry_id, edge))
+        for ed, en_t in self.entry_list:
+            en_t[1].bind('<Return>', lambda event=e: self.kill_all_edge_entries())
+            en_t[2].bind('<Return>', lambda event=e: self.kill_all_edge_entries())
+
+    def kill_all_edge_entries(self):
+        for edge, en_t in self.entry_list:
+            edge.set_weight(en_t[1].get())
+            edge.set_id(en_t[2].get())
+        for frame in [t[1][0] for t in self.entry_list]:
+            frame.destroy()
+        # for entry, edge in self.entry_vals:
+        #     edge.set_weight(int(entry.get()))
+        #     entry.destroy()
+        # for entry, edge in self.entry_ids:
+        #     edge.set_id(entry.get())
+        #     entry.destroy()
+        self.entry_list.clear()
 
     def on_shape_r_clicked(self, e):
         top = Toplevel(self.window)
-        node = self.node_grid[gen_name(e)]['node']
+
+        if self.top_ui is not None:
+            self.top_ui.destroy()
+        self.top_ui = top
+
+        node = self.get_node(e)
 
         frame_l = Frame(top)
         frame_r = Frame(top)
@@ -145,28 +280,37 @@ class UI:
 
         name_label = Label(top, text="Name: ")
 
-        name_entry = Entry(top, textvariable=self.buffer)
+        name_entry = Entry(top)
         name_entry.delete(0, END)
-        name_entry.insert(END, self.node_grid[gen_name(e)]['node'].get_name())
-        name_entry.bind('<Return>', lambda event=e: self.on_enter(event, top, node))
+        name_entry.insert(END, self.get_node(e).get_name())
         name_entry.focus()
         name_entry.select_range(0, END)
 
         capacity_label = Label(frame_l, text="Capacity: ")
 
-        capacity_entry = Entry(frame_l, textvariable=self.d1_buffer, width=2)
-        capacity_entry.bind('<Return>', lambda event=e: self.on_enter(event, top, node))
+        capacity_entry = Entry(frame_l, width=2)
         capacity_entry.delete(0, END)
-        capacity_entry.insert(END, '0')
+        capacity_entry.insert(END, self.get_node(e).get_pop())
 
         max_label = Label(frame_r, text="Max: ")
 
-        max_entry = Entry(frame_r, textvariable=self.d2_buffer, width=2)
-        max_entry.bind('<Return>', lambda event=e: self.on_enter(event, top, node))
+        max_entry = Entry(frame_r, width=2)
         max_entry.delete(0, END)
-        max_entry.insert(END, '0')
+        max_entry.insert(END, self.get_node(e).get_max_pop())
 
-        btn_ok = Button(frame_b, text="Ok", command=lambda event=e: self.on_enter(event, top, node))
+        name_entry.bind('<Return>', lambda event=e: on_enter(event, top, node
+                                                             , name_entry, capacity_entry, max_entry))
+        capacity_entry.bind('<Return>', lambda event=e: on_enter(event, top, node
+                                                                 , name_entry, capacity_entry, max_entry))
+        max_entry.bind('<Return>', lambda event=e: on_enter(event, top, node
+                                                            , name_entry, capacity_entry, max_entry))
+        btn_burn_0 = Button(frame_b, text="Fire 1", command=lambda event=e: self.burn(node, reach=1))
+
+        btn_burn_1 = Button(frame_b, text="Fire 2", command=lambda event=e: self.burn(node, reach=2))
+
+        btn_ok = Button(frame_b, text="Ok", command=lambda event=e: on_enter(event, top, node
+                                                                             , name_entry, capacity_entry,
+                                                                             max_entry))
 
         btn_del = Button(frame_b, text="Delete", command=lambda x=e: self.do_destroy(e, top))
 
@@ -181,42 +325,47 @@ class UI:
 
         btn_ok.grid(row=0, column=0, sticky="e")
         btn_del.grid(row=0, column=1, sticky="e")
-
-    def on_enter(self, e, top, n):
-        if self.verify_inputs():
-            top.destroy()
-            n.set_name(self.buffer.get())
-
-    def verify_inputs(self):
-        return all([b.get() is not None and len(b.get()) > 0 for b in self.buffers if type(b) == StringVar]) \
-            and self.d1_buffer.get() >= 0 \
-            and self.d2_buffer.get() >= 0
+        btn_burn_0.grid(row=0, column=2, sticky="e")
+        btn_burn_1.grid(row=0, column=3, sticky="e")
 
     def do_destroy(self, e, top):
+        self.kill_all_edge_entries()
         n_name = gen_name(e)
         self.canvas.delete(self.node_grid[n_name]['graphic'])
         del self.node_grid[gen_name(e)]
 
         for e_set in list(self.edge_map.keys()):
             if n_name in e_set:
-                print(self.edge_map)
                 self.canvas.delete(self.edge_map[e_set][0])
                 del self.edge_map[e_set]
 
         top.destroy()
         self.remove_selector()
 
+    def get_n_edges(self, n_name):
+        return [self.edge_map[e_set][1] for e_set in self.edge_map.keys() if n_name in e_set]
+
+    def get_n_edge_tuples(self, n_name):
+        return [self.edge_map[e_set] for e_set in self.edge_map.keys() if n_name in e_set]
+
     def remove_selector(self):
         self.selected = None
         self.canvas.delete(self.selector)
 
-    def create_building(self):
+    def validate_building(self):
         nodes = self.get_nodes()
         edges = self.get_edges()
-        for n in nodes:
-            print(type(n))
-        b = graphs.Building(nodes, edges)
-        print(b.get_dot_rep())
+        building = graphs.Building(nodes, edges)
+        if not building.has_exit():
+            print("Building has no exit!")
+        else:
+            print(building.get_dot_rep(flip_y=True, di_graph=False))
+
+    def burn(self, node, reach):
+        nodes = self.get_nodes()
+        edges = self.get_edges()
+        building = graphs.Building(nodes, edges)
+        building.detect_fire(node, reach=reach)
 
     def get_nodes(self):
         return [self.node_grid[k]['node'] for k in self.node_grid.keys()]
@@ -224,9 +373,15 @@ class UI:
     def get_edges(self):
         return [e for (l, e) in self.edge_map.values()]
 
-    def auto_name(self, kind):
-        print(self.get_nodes())
-        return str(kind).split('.')[1].split('\'>')[0] + f"_{len([n for n in self.get_nodes() if type(n) == kind])}"
+    def get_node(self, coord):
+        return self.node_grid[gen_name(coord)]['node']
+
+    def auto_name_node(self, kind):
+        # return str(kind).split('.')[1].split('\'>')[0] + f"_{len([n for n in self.get_nodes() if type(n) == kind])}"
+        return f'Node_{len(self.get_nodes())}'
+
+    def auto_id_edge(self):
+        return f'E_{len(self.get_edges())}'
 
     def get_width(self):
         return self.w
@@ -236,11 +391,12 @@ class UI:
 
     def translate_to_neato_coord(self, x, y):
         return x, self.h - y
+        # return x, y
 
 
 def get_grid_coord(e):
     g_c = 20
-    return e.x - (e.x % g_c), e.y - (e.y % g_c), (e.x - (e.x % g_c)) + 20, (e.y - (e.y % g_c)) + 20
+    return e.x - (e.x % g_c), e.y - (e.y % g_c), (e.x - (e.x % g_c)) + g_c, (e.y - (e.y % g_c)) + g_c
 
 
 def gen_name(e):
@@ -256,11 +412,30 @@ def get_middle(x1, y1, x2, y2):
     return (x1 + x2) / 2, (y1 + y2) / 2
 
 
-
-
 def clickable(x):
     return x > 140
 
 
+def save(process, filename):
+    with open(filename, 'wb') as file:
+        pickle.dump((process.node_grid, process.edge_map), file)
+
+
+def restore(process, filename):
+    with open(filename, 'rb') as file:
+        ng, em = pickle.load(file)
+        process.restore(ng, em)
+
+
+class Wrap:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+
 if __name__ == "__main__":
-    UI()
+    # with open('yeet.pkl', 'wb') as file:
+    #     pickle.
+    ui = UI()
+    # with open('yeet.pkl', 'wb' ) as file:
+    #     pickle.dump((ui.node_grid, ui.edge_map), file)

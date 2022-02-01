@@ -2,6 +2,28 @@ import graphviz
 import math
 
 
+def get_m_path_pop(route):
+    return sum([n.get_max_pop() for n in route])
+
+
+def get_path_pop(route):
+    return sum([n.get_pop() for n in route])
+
+
+def adjust_weights(path, route):
+    tot_pop = get_path_pop(route[0:len(route) - 1])
+    max_pop = get_m_path_pop(route[0:len(route) - 1])
+    avg_pop = tot_pop / (len(route) - 1)
+    if tot_pop > max_pop:
+        for e in path:
+            e.update_weight(avg_pop)
+    for n in route:
+        print(route)
+        if avg_pop > n.get_pop():
+            print(f"yeet: {n} {route} d: {avg_pop - n.get_pop()}")
+            n.update_pop(avg_pop - n.get_pop())
+
+
 class Building:
     def __init__(self, nodes=None, edges=None):
         if nodes is None:
@@ -27,21 +49,30 @@ class Building:
     def get_connector_nodes(self):
         return [n for n in self.nodes if type(n) == Node]
 
-    def get_dot_rep(self):
-        g = graphviz.Graph('G', engine='neato')
+    def get_dot_rep(self, coord_mod=40.0, flip_y=False, di_graph=False):
+        if di_graph:
+            g = graphviz.Digraph('G', engine='neato')
+        else:
+            g = graphviz.Graph('G', engine='neato')
         g.attr('node', shape='rect')
+        corr = 720
         for n in self.get_nodes():
             g.node(n.get_name()
-                   , pos=f'{n.get_x()}, {n.get_y()}!'
+                   , pos=f'{n.get_x() / coord_mod}, {720-(n.get_y() / coord_mod) if flip_y else n.get_y() / coord_mod}!'
                    , shape=n.get_shape()
                    , color=n.get_color()
-                   , label=f"{n.get_name()}\n({n.get_pop()}/{n.get_max_pop()})")
+                   , label=f"{n.get_name()}\n({round(n.get_pop(), 2)}/{n.get_max_pop()})")
         for e in self.get_edges():
-            g.edge(e.get_first().get_name(), e.get_second().get_name(), color=e.get_color())
+            g.edge(e.get_first().get_name(), e.get_second().get_name()
+                   , color=e.get_color()
+                   , label=f'{round(e.get_weight(), 2)}')
         return g
 
     def get_neighbours(self, n):
         return [(o, e) for o in self.nodes for e in self.edges if o is e.get_other(n)]
+
+    def get_neighbour_nodes(self, n):
+        return [o for o in self.nodes for e in self.edges if o is e.get_other(n)]
 
     def get_node_edges(self, n):
         return [e for e in self.edges if e.get_other(n) is not None]
@@ -61,28 +92,109 @@ class Building:
                 if alt < dist[v]:
                     dist[v] = alt
                     prev[v] = u
-        return prev
+        return {'prev': prev, 'dist': dist}
+
+    def get_route(self, n, p):
+        route = [p]
+        prev = self.dykstra(n)['prev']
+        while route[0] in prev.keys() and prev[route[0]] is not None \
+                and prev[route[0]] is not n and type(n) is not ExitNode:
+            route = [prev[route[0]]] + route
+        return [n] + route
+
+    def get_path(self, start_n, end_n):
+        route = self.get_route(start_n, end_n)
+        path = []
+        for i in range(len(route) - 1):
+            e, rev = self.get_edge(route[i], route[i + 1])
+            if rev:
+                e.flip()
+            path += [e]
+        return path
+
+    def has_exit(self):
+        return len([n for n in self.nodes if type(n) == ExitNode]) > 0
+
+    def closest_exit(self, node):
+        dist = self.dykstra(node)['dist']
+        if len([n for n in dist.keys() if type(n) == ExitNode]) == 0:
+            return None
+        return min({k: v for k, v in dist.items() if type(k) == ExitNode}.items()
+                   , key=lambda i: i[1])[0]
+
+    def get_edge(self, n, p):
+        edge = next(iter([e for e in self.edges if (e.get_first() is n or e.get_second() is n)
+                          and (e.get_first() is p or e.get_second() is p)]), None)
+        if edge is None:
+            return None, False
+        return edge, edge.get_first() is p
+
+    def build_routes(self):
+        q = list(self.nodes)
+        q.sort(key=lambda node: node.get_pop())
+        used_edges = []
+        for n in q:
+            if n.is_handled():
+                continue
+            if type(n) is not ExitNode:
+                if (out_n := self.closest_exit(n)) is None:
+                    print("No exit connected!")
+                    return
+                path = self.get_path(n, out_n)
+                route = self.get_route(n, out_n)
+                used_edges += [e for e in path if e not in used_edges]
+                adjust_weights(path, route)
+                for n_ in route:
+                    n_.handle()
+        self.edges = used_edges
+        for n in self.nodes:
+            n.un_handle()
+        print(self.get_dot_rep(40, flip_y=True, di_graph=True))
+
+    def detect_fire(self, node, reach=1, weight=99999):
+        if reach >= 1:
+            node.set_burning()
+            for (n, e) in self.get_neighbours(node):
+                e.update_weight(weight)
+                self.detect_fire(n, reach - 1, int(weight / 2))
+        self.build_routes()
 
 
 class Node:
     def __init__(self, name, x, y, max_pop=0, pop=0):
         self.name = name
-        self.x = x / 40
-        self.y = y / 40
+        self.x = x
+        self.y = y
         self.max_pop = max_pop
         self.pop = pop
+        self.handled = False
+        self.burning = False
 
     def __repr__(self):
-        return f'Node {self.name} at ({self.x}, {self.y})'   # ' with pop: ({self.pop}/{self.max_pop})'
+        return f'Node {self.name}'  # at ({self.x}, {self.y})'   # ' with pop: ({self.pop}/{self.max_pop})'
 
     def __str__(self):
-        return f'Node {self.name} at ({self.x}, {self.y})'   # with pop: ({self.pop}/{self.max_pop})'
+        return f'Node {self.name}'  # at ({self.x}, {self.y})'   # with pop: ({self.pop}/{self.max_pop})'
 
     def get_name(self):
         return self.name
 
     def set_name(self, name):
         self.name = name
+
+    def handle(self):
+        self.handled = True
+
+    def is_handled(self):
+        return self.handled
+
+    def un_handle(self):
+        self.handled = False
+
+    def set_burning(self):
+        if not self.burning:
+            self.name = self.name + '🔥'
+        self.burning = True
 
     def get_x(self):
         return self.x
@@ -93,6 +205,12 @@ class Node:
     def get_shape(self):
         return 'circle'
 
+    def set_pop(self, pop):
+        self.pop = pop
+
+    def set_max_pop(self, max_pop):
+        self.max_pop = max_pop
+
     def get_pop(self):
         return self.pop
 
@@ -100,10 +218,9 @@ class Node:
         return self.max_pop
 
     def update_pop(self, update):
+        print(f'POP UPDATE of {self.name} with {update}')
         if self.pop + update < 0:
             raise Exception("Negative population not possible")
-        elif self.pop + update > self.max_pop:
-            raise Exception("Population of node higher than max!")
         else:
             self.pop = self.pop + update
 
@@ -130,20 +247,41 @@ class ExitNode(Node):
 
 
 class Edge:
-    def __init__(self, n1, n2, weight=0, color='red'):
-        self.n1 = n1
-        self.n2 = n2
+    def __init__(self, n, p, id, color='green', weight=1):
+        self.n = n
+        self.p = p
         self.weight = weight
         self.color = color
+        self.used_by = []
+        self.id = id
 
     def __eq__(self, other):
-        return (self.n1 == other.n1 and self.n2 == other.n2) or (self.n2 == other.n1 and self.n1 == other.n2)
+        return (self.n == other.n and self.p == other.p) or (self.p == other.n and self.n == other.p)
+
+    def __repr__(self):
+        return f'{self.n} -- {self.p} C: {self.weight}'
 
     def get_first(self):
-        return self.n1
+        return self.n
 
     def get_second(self):
-        return self.n2
+        return self.p
+
+    def get_id(self):
+        return self.id
+
+    def set_id(self, id):
+        self.id = id
+
+    def set_weight(self, weight):
+        self.weight = weight
+
+    def update_weight(self, weight):
+        print(f"UPDATE: {weight}")
+        if self.weight + weight < 1:
+            raise Exception("Negative or zero-weight impossible!")
+        else:
+            self.weight = min(self.weight + weight, 99999)
 
     def get_weight(self):
         return self.weight
@@ -152,10 +290,13 @@ class Edge:
         return self.color
 
     def get_other(self, n):
-        if n == self.n1:
-            return self.n2
-        if n == self.n2:
-            return self.n1
+        if n == self.n:
+            return self.p
+        if n == self.p:
+            return self.n
+
+    def flip(self):
+        self.n, self.p = self.p, self.n
 
 
 """
@@ -166,20 +307,24 @@ Edge case: disconnected node with population
 """
 
 if __name__ == "__main__":
-    sn_0 = SensorNode("Sensor 1", 2, 0)
-    n_0 = Node('Collector 1', 2, 1)
-    n_1 = Node('Collector 2', 3, 3)
-    n_2 = Node('Collector 3', 1, 3)
-    f_3 = Node('End 1', 1, 4)
+    sn_0 = SensorNode("Sensor 1", 2, 0, max_pop=3, pop=3)
+    n_0 = Node('Collector 1', 2, 1, max_pop=3, pop=3)
+    n_1 = Node('Collector 2', 3, 3, max_pop=3, pop=4)
+    n_2 = Node('Collector 3', 1, 3, max_pop=3, pop=4)
+    f_3 = ExitNode('End 1', 1, 4, max_pop=0, pop=0)
 
-    e0 = Edge(sn_0, n_0, 1)
-    e1 = Edge(n_0, n_1, 1)
-    e2 = Edge(n_0, n_2, 1)
-    e3 = Edge(n_2, f_3, 3)
-    e4 = Edge(n_1, f_3, 0)
+    e0 = Edge(sn_0, n_0, weight=10)
+    e1 = Edge(n_0, n_1)
+    e2 = Edge(n_0, n_2)
+    e3 = Edge(n_2, f_3)
+    e4 = Edge(n_1, f_3)
     b = Building([sn_0, n_0, n_1, n_2, f_3], [e0, e1, e2, e3, e4])
-    print(b.get_dot_rep())
+    b.detect_fire(n_2)
+    print(b.get_dot_rep(coord_mod=0.5))
+    # print(b.get_neighbours(sn_0))
+    # print(b.dykstra(sn_0))
 
-    print(b.get_neighbours(sn_0))
-
-    print(b.dykstra(sn_0))
+    # print(b.closest_exit(n_0))
+    # print(b.get_route(sn_0, f_3))
+    # print(b.get_path(sn_0, f_3))
+    print(b.build_routes())
