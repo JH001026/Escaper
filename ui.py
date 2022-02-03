@@ -2,6 +2,7 @@ from tkinter import *
 from enum import Enum
 from PIL import ImageTk, Image
 import graphs
+from graphs import Wrap
 import pickle
 
 
@@ -32,6 +33,7 @@ def on_enter(e, top, n, name_e, cap_e, max_e):
         n.set_max_pop(int(max_e.get()))
         top.destroy()
 
+
 class UI:
     def __init__(self):
         self.window = Tk()
@@ -49,9 +51,9 @@ class UI:
 
         self.canvas = Canvas(self.window.geometry("1280x720"), width=1280, height=720)
 
-        self.ph = ImageTk.PhotoImage(Image.open('office.jpeg'), master=self.canvas)
-        self.canvas.create_image((150, 0), image=self.ph, anchor='nw')
-        self.canvas.update()
+        # self.ph = ImageTk.PhotoImage(Image.open('office.jpeg'), master=self.canvas)
+        # self.canvas.create_image((150, 0), image=self.ph, anchor='nw')
+        # self.canvas.update()
 
         self.node_grid = {}
         self.edge_map = {}
@@ -87,9 +89,9 @@ class UI:
         self.window.update()
 
         btn_gen_graph = Button(self.window
-                               , text="Validate Building"
+                               , text="Print Graph"
                                , anchor="w"
-                               , command=lambda: self.validate_building()
+                               , command=lambda: self.print_graph()
                                , width=15)
         btn_gen_graph.place(x=0, y=btn_add_enode.winfo_y() + btn_add_enode.winfo_height())
 
@@ -128,73 +130,84 @@ class UI:
         self.mode = mode
 
     def callback(self, e):
+        print(e.x, e.y)
         if not clickable(e.x) or self.mode == Mode.POINTER:
             return
         if self.create_node(Wrap(e.x, e.y)) is not None:
             self.on_shape_r_clicked(e)
 
-    def create_node(self, wrap):
+    def create_node(self, wrap, name=None):
+
         o_name = gen_name(wrap)
-        if o_name in self.node_grid.keys():
+        if gen_name(wrap) in self.node_grid.keys():
+            print("Exists")
             return None
 
         o, n = None, None
         if self.mode == Mode.ADD_SENSOR:
-            o = self.canvas.create_rectangle(get_grid_coord(wrap), fill='cyan', tags=gen_name(wrap))
+            o = self.canvas.create_rectangle(get_grid_coord(wrap), fill='cyan', tags=o_name)
             n = graphs.SensorNode(self.auto_name_node(graphs.SensorNode)
                                   # , *self.translate_to_neato_coord(*get_middle(*get_grid_coord(wrap))))
                                   , get_grid_coord(wrap)[0], get_grid_coord(wrap)[1])
 
         elif self.mode == Mode.ADD_COLLECTOR:
-            o = self.canvas.create_oval(get_grid_coord(wrap), fill='red', tags=gen_name(wrap))
+            o = self.canvas.create_oval(get_grid_coord(wrap), fill='red', tags=o_name)
             n = graphs.Node(self.auto_name_node(graphs.Node)
                             # , *self.translate_to_neato_coord(*get_middle(*get_grid_coord(wrap))))
                             , get_grid_coord(wrap)[0], get_grid_coord(wrap)[1])
 
         elif self.mode == Mode.ADD_END:
-            o = self.canvas.create_oval(get_grid_coord(wrap), fill='green', tags=gen_name(wrap))
+            o = self.canvas.create_oval(get_grid_coord(wrap), fill='green', tags=o_name)
             n = graphs.ExitNode(self.auto_name_node(graphs.ExitNode)
                                 # , *self.translate_to_neato_coord(*get_middle(*get_grid_coord(wrap))))
                                 , get_grid_coord(wrap)[0], get_grid_coord(wrap)[1])
 
         self.canvas.tag_bind(o_name, '<Button-1>', self.on_shape_l_clicked)
-        self.canvas.tag_bind(o_name, '<Button-2>', self.on_scroll_clicked)
+        self.canvas.tag_bind(o_name, '<Double-Button-1>', self.on_scroll_clicked)
         # self.canvas.tag_bind(o_name, '<Button-2>', self.on_shape_double_l_clicked)
         self.canvas.tag_bind(o_name, '<Button-3>', self.on_shape_r_clicked)
 
+        if name is None:
+            name = self.auto_name_node(type(n))
+        n.set_name(name)
+
         if o is not None:
             self.node_grid[gen_name(wrap)] = {'graphic': o, 'node': n}
-            print(f'Placed: {n} ({n.get_x()}, {self.h - n.get_y()})')
-
+            print(f'Placed: {o_name} ({n.get_x()}, {n.get_y()}')
         self.canvas.pack()
         return n
 
     def restore(self, saved_node_grid, saved_edge_map):
-
         for ui_o in [d['graphic'] for d in self.node_grid.values()] + [l for (l, e) in self.edge_map.values()]:
             self.canvas.delete(ui_o)
 
         self.node_grid = {}
         self.edge_map = {}
-        print(saved_node_grid)
 
         for n in [d['node'] for d in saved_node_grid.values()]:  # Build nodes
             self.node_to_mode(n)  # Set correct mode for node
-            self.create_node(Wrap(n.get_x(), n.get_y()))
+            self.create_node(Wrap(n.get_x(), n.get_y()), n.get_name())
         for e in [e for (l, e) in saved_edge_map.values()]:  # Build edges
             edge = self.create_edge(Wrap(e.get_first().get_x(), e.get_first().get_y())
                              , Wrap(e.get_second().get_x(), e.get_second().get_y()))
             edge.set_weight(e.get_weight())
             edge.set_id(e.get_id())
             self.edge_map.values()
+        self.mode = Mode.POINTER
 
     def node_to_mode(self, node):
-        if type(node) is graphs.SensorNode:
+        if node.get_type() == graphs.NodeEnum.SensorNode:
             self.mode = Mode.ADD_SENSOR
-        elif type(node) is graphs.Node:
+        elif node.get_type() == graphs.NodeEnum.Node:
             self.mode = Mode.ADD_COLLECTOR
-        elif type(node) is graphs.ExitNode:
+        elif node.get_type() == graphs.NodeEnum.ExitNode:
             self.mode = Mode.ADD_END
+        # if type(node) is graphs.SensorNode:
+        #     self.mode = Mode.ADD_SENSOR
+        # elif type(node) is graphs.Node:
+        #     self.mode = Mode.ADD_COLLECTOR
+        # elif type(node) is graphs.ExitNode:
+        #     self.mode = Mode.ADD_END
 
     def on_shape_l_clicked(self, e):
         if self.selected is None:
@@ -210,8 +223,10 @@ class UI:
         if self.node_grid[sel_name] is not None \
                 and self.get_node(sel) is not self.get_node(e) \
                 and frozenset({sel_name, gen_name(e)}) not in self.edge_map.keys():
-            line = self.canvas.create_line(*get_middle(*get_grid_coord(e)), *get_middle(*get_grid_coord(sel)))
+            line = self.canvas.create_line(*get_middle(*get_grid_coord(sel)), *get_middle(*get_grid_coord(e))
+                                           , arrow=LAST)
             edge = graphs.Edge(self.get_node(e), self.get_node(sel), self.auto_id_edge())
+            print(edge)
             self.edge_map[frozenset({sel_name, gen_name(e)})] = (line, edge)
             self.remove_selector()
         self.canvas.pack()
@@ -286,7 +301,7 @@ class UI:
         name_entry.focus()
         name_entry.select_range(0, END)
 
-        capacity_label = Label(frame_l, text="Capacity: ")
+        capacity_label = Label(frame_l, text="Population: ")
 
         capacity_entry = Entry(frame_l, width=2)
         capacity_entry.delete(0, END)
@@ -352,14 +367,11 @@ class UI:
         self.selected = None
         self.canvas.delete(self.selector)
 
-    def validate_building(self):
+    def print_graph(self):
         nodes = self.get_nodes()
         edges = self.get_edges()
         building = graphs.Building(nodes, edges)
-        if not building.has_exit():
-            print("Building has no exit!")
-        else:
-            print(building.get_dot_rep(flip_y=True, di_graph=False))
+        print(building.get_dot_rep(flip_y=True, di_graph=True))
 
     def burn(self, node, reach):
         nodes = self.get_nodes()
@@ -427,10 +439,7 @@ def restore(process, filename):
         process.restore(ng, em)
 
 
-class Wrap:
-    def __init__(self, x, y):
-        self.x = x
-        self.y = y
+
 
 
 if __name__ == "__main__":
