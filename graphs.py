@@ -31,6 +31,16 @@ def adjust_weights(path, route):
             n.update_pop(avg_pop - n.get_pop())
 
 
+# def namestr(obj, namespace):
+#     return [name for name in namespace if namespace[name] is obj]
+#
+# def dprint(*args):
+#     for arg in args:
+#         print(f'{namestr(arg, globals())[0]}= \n {arg}')
+
+
+
+
 class Building:
     def __init__(self, nodes=None, edges=None):
         if nodes is None:
@@ -103,16 +113,23 @@ class Building:
                     prev[v] = u
         return {'prev': prev, 'dist': dist}
 
+    """
+    Assembles a (shortest) route by first running Dijkstra's algorithm 
+    on the start node and then repeatedly prepending previous nodes until
+    the target or an exit is reached.
+    """
     def get_route(self, n, p):
         route = [p]
         prev = self.dykstra(n)['prev']
         while route[0] in prev.keys() and prev[route[0]] is not None \
                 and prev[route[0]] is not n and n.get_type() != NodeEnum.ExitNode:
-            # and prev[route[0]] is not n and type(n) is not ExitNode:
-
             route = [prev[route[0]]] + route
         return [n] + route
 
+    """
+    Returns a path of edges from a start node to an end node by first
+    creating a route (of nodes) and taking the edges between them
+    """
     def get_path(self, start_n, end_n):
         route = self.get_route(start_n, end_n)
         path = []
@@ -123,21 +140,18 @@ class Building:
             path += [e]
         return path
 
-    def has_exit(self):
-        # return len([n for n in self.nodes if isinstance(n, ExitNode)]) > 0
-        return len([n for n in self.nodes if n.get_type == NodeEnum.ExitNode]) > 0
-
+    """
+    Finds the closest exit Node from a start node. 
+    """
     def closest_exit(self, node):
         dist = self.dykstra(node)['dist']
-        # for n in dist.keys():
-            # print(id(ExitNode), id(n.__class__))
-            # print(is_class(n, ExitNode))
-        # if len([n for n in dist.keys() if isinstance(n, ExitNode)]) == 0:
         if len([n for n in dist.keys() if n.get_type() == NodeEnum.ExitNode]) == 0:
             return None
-        # return min({k: v for k, v in dist.items() if isinstance(k, ExitNode)}.items()
         return min({k: v for k, v in dist.items() if k.get_type() == NodeEnum.ExitNode}.items()
                    , key=lambda i: i[1])[0]
+
+    def has_exit(self):
+        return len([n for n in self.nodes if n.get_type == NodeEnum.ExitNode]) > 0
 
     def get_edge(self, n, p):
         edge = next(iter([e for e in self.edges if (e.get_first() is n or e.get_second() is n)
@@ -146,6 +160,13 @@ class Building:
             return None, False
         return edge, edge.get_first() is p
 
+    """
+    Builds routes for an entire building by making sure all nodes are 
+    connected to an exit node. This algorithm starts with the node with
+    the highest population. Each iteration, the edge weights are adjusted
+    (increased) if the number of people moving over them is perceived
+    to be higher than the path's assigned capacity.
+    """
     def build_routes(self):
         q = list(self.nodes)
         q.sort(key=lambda node: node.get_pop())
@@ -167,10 +188,9 @@ class Building:
         for e in self.edges:
             if e not in used_edges:
                 e.hide()
-        # self.edges = used_edges
         for n in self.nodes:
             n.un_handle()
-        # print(self.get_dot_rep(40, flip_y=True, di_graph=True))
+
         return self.get_directions()
 
     def get_directions(self):
@@ -416,16 +436,18 @@ Edge case: disconnected node with population
 """
 
 if __name__ == "__main__":
+    var = "yeet"
+    dprint(var, var, var,var,var,var)
 
-    building = restore('yeet.pkl')
-    # print("OG")
-    print(building.get_dot_rep(flip_y=True, di_graph=True))
-
-    print(building.detect_fire(building.get_node('A'), reach=1))
-    building.reset_building()
-    print(building.detect_fire(building.get_node('E'), reach=1))
-    # print(building.build_routes())
-    print(building.get_dot_rep(flip_y=True, di_graph=True))
+    # building = restore('yeet.pkl')
+    # # print("OG")
+    # print(building.get_dot_rep(flip_y=True, di_graph=True))
     #
+    # print(building.detect_fire(building.get_node('A'), reach=1))
     # building.reset_building()
-    # print(building.get_dot_rep())
+    # print(building.detect_fire(building.get_node('ES'), reach=1))
+    # # print(building.build_routes())
+    # print(building.get_dot_rep(flip_y=True, di_graph=True))
+    # #
+    # # building.reset_building()
+    # # print(building.get_dot_rep())
