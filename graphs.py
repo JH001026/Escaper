@@ -27,7 +27,6 @@ def adjust_weights(path, route):
             e.update_weight(avg_pop)
     for n in route:
         if avg_pop > n.get_pop():
-            print(f"yeet: {n} {route} d: {avg_pop - n.get_pop()}")
             n.update_pop(avg_pop - n.get_pop())
 
 
